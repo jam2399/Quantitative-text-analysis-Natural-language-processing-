@@ -1,0 +1,114 @@
+---
+title: "Problem Set 4 - Part C"
+output: html_document
+---
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+### Topic models
+
+1. The running example in this exercise will focus on understanding the communication strategies of Donald Trump on Twitter. First, read the file `trump-tweets.csv`, which contains Trump's tweets from January 1st 2017 to June 29th 2018. Create a histogram with the number of tweets by month.
+
+```{r}
+library(ggplot2)
+tweets <- readr::read_csv("trump-tweets.csv", col_types="cTDc")
+tweets$date <- format(tweets$date, "%Y-%m")
+
+ggplot(tweets, aes(x=tweets$date)) + 
+geom_histogram(stat="count", )+
+scale_x_discrete("Date")+
+theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5))
+```
+
+Create a corpus object and a DFM using options that seem appropriate to you.
+
+```{r}
+library(quanteda)
+#Create a corpus object a DFM:
+tweetc <- corpus(tweets$text)
+
+#Create a DFM:
+dfmt <- dfm(tweetc, remove=stopwords("english"), remove_url=TRUE, remove_punct=TRUE,
+             stem = TRUE, verbose=TRUE)
+dfmt <- dfm_trim(dfmt, min_docfreq = 2, verbose = TRUE)
+tweets <- tweets[-which(rowSums(dfmt) == 0), ]
+dfmt <- dfmt[-which(rowSums(dfmt) == 0)]
+```
+
+2. Run an LDA model. You may want to experiment with different number of topics or just stick to `K=30` as in the previous example, and to experiment with different pre-processing decisions.
+
+```{r}
+#install.packages("topicmodels")
+library(topicmodels)
+K <- 10
+lda <- LDA(dfmt, k = K, method = "Gibbs", 
+                control = list(verbose=25L, seed = 123, burnin = 100, iter = 500))
+```
+**I choose K = 10 as I think this K=10 is the most valid, though the cross validated approach suggests that I should take K between 20 and 30. I have actually tried K = 30 and K = 20 and found the results are not valid enough, since I cannot label some topics that found by LDA model or the topics are too meaningless. K = 10 gives a very valid reslut with clear topics, so I choose K = 10**
+
+Look at the words most asociated with each topic for a sample of topics. Do you find that the results are valid according to the different definitions of validity we discussed in the lecture? Can you put labels to the topics?
+
+```{r}
+terms <- get_terms(lda, 15)
+terms[,1]
+topics <- get_topics(lda, 1)
+head(topics)
+# Topic 1
+paste(terms[,1], collapse=", ")
+sample(tweets$text[topics==1], 1)
+#North Korea issue
+# Topic 9
+paste(terms[,9], collapse=", ")
+sample(tweets$text[topics==9], 1)
+#Response to the suspect of the Russia-Trump ties
+paste(terms[,6], collapse=", ")
+sample(tweets$text[topics==6], 1)
+#Support Republican campaign
+```
+
+**I think the results are quite valid. According to semantic validity, the words in the same group are related to a same topic. According to construct validity, the topics are what I knew that Trump talked frequently. The predictive validity is also good as it can capture the related revents well, and I will show it on the question 3. **
+
+3. Pick a topic whose prevalence you think may have evolved over time and plot it. (For example, North Korea). What do you find?
+
+```{r}
+# Topic 1
+paste(terms[,1], collapse=", ")
+sample(tweets$text[topics==1], 1)
+# add predicted topic to dataset
+tweets$pred_topic <- topics
+#tweets$year <- substr(nyt$datetime, 1, 4) # extract year
+ # frequency table with articles about stock market, per year
+tab <- table(tweets$date[tweets$pred_topic==1])
+plot(tab)
+```
+
+**The plot of "North Korea" topic over time can capture the correct spotlights (and Trump's attention) to this topic, so the predictive validity is good. On April 5th, North Korea's test-firing of a medium-range ballistic missile started the tension, which drew attention from Trump. On July 4th North Korea conducted the first publicly announced flight test of its ICBM Hwasong-14, again drew spotlights. On September 3, North Korea had conducted a sixth nuclear weapon test. In April 2018, Trump announced and talked about meeting Kim Jong-un, then both Moon and Kim signed the Panmunjom Declaration, declaring the Korean conflict over, which made Trump tweet a lot. Then in June 2018, Singapore summit made US and North Korean meet the first time after Korean War, which is a historic moment of "North Korea" issue. **
+
+4. For this topic, compute the probabilities that each word is associated with the topic. You should be able to get them from the `beta` value within the `LDA` object. Note that the values of this matrix are in the log scale; in order to get the probabilities you'll need to exponentiate them. Sort the words from highest to lowest probability and display the top 30. If your code is correct, you should see the same result as when you ran `terms()` earlier:
+
+```{r}
+lda@terms[order(exp(lda@beta[1,]), decreasing = T)][1:30]
+```
+
+5. Now, use this metric but to extract the probability that a given word belongs to each of the topics. Choose the word "russia" (or any other word you find relevant) and compute those probabilities. Note that these probabilities will probably be very small, but you can normalize them so that they all up to one for this given word. To which topic does the word "Russia" belong?
+
+```{r}
+#lda@terms[order(exp(lda@beta[1,]), decreasing = T)]
+exp(lda@beta[1,])[which(lda@terms == "russia")]
+
+probdf <- data.frame("topic"=c(1:10), "prob"=c(1:10))
+for (i in 1:10){
+  probdf$prob[i] <-exp(lda@beta[i,])[which(lda@terms == "russia")]
+  probdf$prob <- (probdf$prob-min(probdf$prob))/(max(probdf$prob)-min(probdf$prob))
+}
+probdf[which.max(probdf$prob),]
+
+paste(terms[,9], collapse=", ")
+sample(tweets$text[topics==9], 5)
+```
+
+**"Russia" belongs to the topic 9, which is a topic about response to the suspect of the Russia-Trump ties'**
+
+

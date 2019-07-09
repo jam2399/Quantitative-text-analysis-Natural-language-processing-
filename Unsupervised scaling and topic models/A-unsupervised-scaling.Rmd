@@ -1,0 +1,89 @@
+---
+title: "Problem Set 4 - Part A"
+output: html_document
+---
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+### Unsupervised methods
+
+In this part of the assignment, you will use R to understand and apply unsupervised document scaling.
+
+#### 1.  **Unsupervised scaling of the Irish budget corpus scaling**.  Use the `data_corpus_irishbudget2010` in **quanteda** for this.
+
+1.a) Fit a wordfish model of all the documents in this corpus. Apply any required preprocessing steps first. Use the `textplot_scale1d` function to visualize the result. (You may want to use the advanced options of this function to get a better plot than just the default one.) 
+
+What do you learn about what the dimension is capturing? You can use wikipedia to learn about the Irish parties involved in this debate to help you answer this question.
+
+
+```{r}
+data(data_corpus_irishbudget2010)
+irishdfm <- dfm(data_corpus_irishbudget2010, remove=c(stopwords("english")), tolower=TRUE, remove_punct = TRUE, stem=TRUE, verbose=TRUE)
+wf <- textmodel_wordfish(irishdfm, dir=c(2,1))
+
+#plot:
+textplot_scale1d(wf, groups = docvars(data_corpus_irishbudget2010, "party"))
+```
+
+**The dimension captured is the position in the debate of Social Welfare Bill, as the FF and Green parties supported the Social Welfare Bill, and SF, FG and Labour party on the other side opposed this budget plan. It is clearly not the ideology the parties stand, as labour party and FG are oppose on ideology.**
+
+1.b) Plot the wordfish "Eiffel Tower" plot (as in Figure 2 of Slapin and Proksch 2008), from the wordfish object. You can do this using the `textplot_scale1d` function or (even better) using the more advanced code we used in the lecture.
+
+```{r, fig.width = 5, fig.height = 5}
+plot(wf$beta, wf$psi, type = "n", 
+     xlab = "Word discrimination parameters", 
+     ylab = "Word frequency parameters")
+text(wf$beta, wf$psi, wf$features, col = "grey80", cex = .5)
+```
+
+1.c) Plot the log of the length in tokens of each text against the alpha-hat from `wfFit`. What does the relationship indicate?
+
+```{r, fig.width = 5, fig.height = 5}
+library(ggplot2)
+nalpha <- data.frame(log(ntoken(data_corpus_irishbudget2010)), wf$alpha)
+p <- ggplot(nalpha,aes(x = nalpha$log.ntoken.data_corpus_irishbudget2010.., y = nalpha$wf.alpha))
+pq <- p + geom_point()+
+  theme_bw() +
+  stat_smooth(method="lm")
+pq
+```
+
+**The log of the length in tokens of each text is linear corelated to the alphahat, suggesting that alpha hat can capture the length of text very well to measure the "loquaciousness" of politicians**
+
+1.d) Plot the log of the frequency of the top most frequent 1000 words against the same psi-hat values from `wfit`, and describe the relationship.
+
+```{r, fig.width = 5, fig.height = 5}
+sw <- data.frame("psi" = wf$psi, "features" = wf$features)
+sw <- sw[order(sw$psi, decreasing = T),]
+
+sw2 <- data.frame("freq" = topfeatures(irishdfm, 1000))
+sw2$features <- rownames(sw2)
+
+sw2 <- merge(sw, sw2, by = "features")
+sw2[which(sw2$features == "peopl"),]
+
+plot(sw2$psi, log(sw2$freq), xlab="psi-hat from wfit", ylab="log form of the frequence of the top 1000 words",
+     main="Frequance of the top 1000 words VS. psi-hat", pch=19)
+```
+
+**Log of the frequency of the top most frequent 1000 words has a clear linear correlation with the same psi-hat values, suggesting that psi-hat is a good prediction of word frequency in the word-fish model**
+
+#### 2. **Fit the correspondence analysis model to the Irish budget speeches.**  
+
+Compare the results for the word scaled values (call it `caFit`) from the first dimension to the beta-hats from `wfFit`.
+
+```{r, fig.width = 5, fig.height = 5}
+#fit the correspondence analysis model:
+wca <- textmodel_ca(irishdfm, nd=2) 
+
+#plot to compare wordfish and CA results:
+plot(wf$beta, wca$colcoord[,1], 
+     xlab="Wordfish beta-hat", ylab="CA dim 1 coordinate",
+     main="Wordfish v CA dim 1", pch=19, xlim = c(-1.5, 1.5), ylim = c(-1.5, 1.5))
+abline(lm(wca$colcoord[,1] ~ wf$beta), col="grey50", lty="dotted")
+```
+
+**The results for the word scaled values from the first dimension to the beta-hats from `wfFit are quite different, and they are not linear correlated but positivey exponential correlated. On the left side, when beta is low, the caFit values are lower; On the right side, when beta is high, the caFit values are higher.**
+
