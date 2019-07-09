@@ -1,0 +1,154 @@
+---
+title: "Assignment 5"
+author: "YOUR NAME HERE"
+output: html_document
+---
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+We now turn to the analysis of the specific characteristics of arguments that make them more persuasive. Using the techniques learned in the class, we will try to determine what is different about comments that receive a delta compared to those that do not.
+
+### 1. What linguistic features make comments more convincing?
+
+Write code below to answer the following questions:
+
+- Are comments that receive a delta longer than comments do not?
+- Do comments that receive a delta contain more punctuation than those that do not?
+- Does the text in comments that receive a delta have higher levels of complexity (lexical diversity and readability scores)?
+- Are there other lingustic features that vary depending on whether a given comment is likely to be persuasive or not?
+
+Use the text in the `comment` variable and the functions in the `quanteda` package.
+
+```{r}
+#1
+r <- read.csv("cmv-comments.csv", stringsAsFactors = FALSE)
+commentd <- corpus(r$comment[r$delta==1])
+commentnod <- corpus(r$comment[r$delta==0])
+t.test(ntoken(commentd), ntoken(commentnod), alternative = c("greater"))
+
+#2
+t.test(ntoken(dfm(commentd, tolower=TRUE, stem=TRUE)) - ntoken(dfm(commentd, remove_punct = TRUE, tolower=TRUE, stem=TRUE)), ntoken(dfm(commentnod, tolower=TRUE, stem=TRUE)) - ntoken(dfm(commentnod, remove_punct = TRUE, tolower=TRUE, stem=TRUE)), alternative = c("greater"))
+
+#3
+colMeans(textstat_lexdiv(dfm(commentd), measure = c("TTR", "CTTR", "K"))[,-1], na.rm = TRUE)
+colMeans(textstat_lexdiv(dfm(commentnod), measure = c("TTR", "CTTR", "K"))[,-1], na.rm = TRUE)
+#The text in comments that receive a delta does not have higher level of complexity in lexical diversity
+colMeans(textstat_readability(commentd, measure = c("FOG", "FOG.PSK", "FOG.NRI"))[,-1], na.rm = TRUE)
+colMeans(textstat_readability(commentnod, measure = c("FOG", "FOG.PSK", "FOG.NRI"))[,-1], na.rm = TRUE)
+#The text in comments that receive a delta have higher level of complexity in readability scores
+
+#4 Stop words that may vary depend on whether a given comment is likely to be persuasive or not.
+t.test(ntoken(dfm(commentd, tolower=TRUE, stem=TRUE)) - ntoken(dfm(commentd, remove = c(stopwords("en")), tolower=TRUE, stem=TRUE)), ntoken(dfm(commentnod, tolower=TRUE, stem=TRUE)) - ntoken(dfm(commentnod, remove = c(stopwords("en")), tolower=TRUE, stem=TRUE)), alternative = c("greater"))
+```
+
+**1.1 Yes, comments that receive a delta are longer than comments do not.**
+**1.2 Yes, comments that receive a delta contain have more punctuation than those that do not， this may due to the comments that receive a delta are longer than comments do not**
+**1.3 Yes, I cannot conclude that the text in comments that receive a delta have higher levels of complexity (lexical diversity and readability scores)**
+**1.4 Stop words that can vary depend on whether a given comment is likely to be persuasive or not, as the comments that receive a delta have more stop words than comments do not.**
+
+### 2. Does the sentiment of a comment affect its persuasiveness? What about its appeal to moral values?
+
+Use one of the sentiment dictionaries included in the `quanteda.dictionaries` package, as well as the Moral Foundations Dictionary (`data_dictionary_MFD`) to answer the questions above. Pay attention to whether you need to normalize the DFM in any way.
+
+```{r}
+library(quanteda.dictionaries)
+#build our dictionary
+pos.words <- data_dictionary_geninqposneg[['positive']]
+neg.words <- data_dictionary_geninqposneg[['negative']]
+mydict <- dictionary(list(positive = pos.words,
+                          negative = neg.words))
+comment <- corpus(r$comment)
+docvars(comment, "delta") <- r$delta
+comment_dfm <- dfm(comment, remove_punct = TRUE, tolower=TRUE, stem=TRUE, remove_url=TRUE, remove=c(stopwords("english")))
+#normalize the dfm:
+comment_dfm <- dfm_weight(comment_dfm, scheme="prop")
+sent <- dfm_lookup(comment_dfm, dictionary = mydict)
+r$sent_score <- as.vector((sent[,1]-sent[,2])*100)
+summary(glm(r$delta ~ r$sent_score, family = binomial))
+#No, the sentiment of a comment does not affect its persuasiveness significantly
+
+#appeal to moral values:
+data(data_dictionary_MFD)
+r$moral <- rowSums(dfm_lookup(comment_dfm, dictionary = data_dictionary_MFD))
+summary(glm(r$delta ~ r$moral, family = binomial))
+##No, the moral values of a comment does not affect its persuasiveness significantly
+```
+
+**No, the sentiment or the moral values of a comment do not affect its persuasiveness, as there is no statistical significance.**
+
+### 3. Are off-topic comments less likely to be convincing?
+
+To answer this question, compute a metric of distance between `post_text` -- the text of the original post (from the author who wants to be convinced) -- and `comment` -- the text of the comment that was found persuasive. Do this for each row of the dataset. Use any metric that you find appropriate, paying attention as usual to whether any type of normalization is required. Explain why this metric may capture whether a comment is `off-topic` or not.
+
+```{r}
+distance <- c(1: nrow(r))
+for (i in 1:nrow(r)){
+  edge <- as.vector(c(r$post_text[i], r$comment[i]))
+  edge_dfm <- dfm(corpus(edge), remove_punct = TRUE, tolower=TRUE, stem=TRUE, remove_url=TRUE, remove=c(stopwords("english")))
+  edge_dfm <- dfm_weight(edge_dfm, scheme="prop")
+  distance[i] <- as.numeric(textstat_dist(edge_dfm, margin = "documents"))
+}
+r$topic_dist <- distance
+#logit model to test the effect:
+summary(glm(r$delta ~ r$topic_dist, family = binomial))
+```
+
+**Yes, off-topic comments less likely to be convincing, since the logit regression models shows the chance of forming a delta will decrease when off-topic distance increases and the effect is quite strong significant.**
+
+**This metric may capture whether a comment is `off-topic` or not, because it calculate the distance in terms of normalized words between documents. Thus if the distance is high, it suggests that the words' usages are more different that means more off-topic.**
+
+### 4. What words appear to be good predictors of persuasion?
+
+Are there specific words that are predictive that a thread or comment will lead to persuasion? Or maybe some specific issues about which more people are likely to change their view? To answer this question, first use keyness analysis to detect which words are more likely to appear in comments that persuade people (`comment` variable) and in the text of the post (`post_text`) that started the conversation. Do you find that specific words are good predictors of whether someone will change their mind on a thread?
+
+```{r}
+#keyness analysis to detect which words are more likely to appear in comments that persuade people:
+comment_dfm <- dfm(comment, remove_punct = TRUE, tolower=TRUE, stem=TRUE, remove_url=TRUE, remove=c(stopwords("english")))
+head(textstat_keyness(comment_dfm, docvars(comment, "delta")==1), 10)
+head(kwic(r$comment, "dog", window = 10), 10)
+#keyness analysis to detect which words are more likely to appear in the text of the post that persuade people:
+posts <- corpus(r$post_text)
+docvars(posts, "delta") <- r$delta
+posts_dfm <- dfm(posts, remove_punct = TRUE, tolower=TRUE, stem=TRUE, remove_url=TRUE, remove=c(stopwords("english")))
+head(textstat_keyness(posts_dfm, docvars(posts, "delta")==1), 10)
+kwic(r$comment, "empathi", window = 10, valuetype = "regex")
+```
+
+**Yes, I find that specific words are good predictors of whether someone will change their mind on a thread. **
+
+**For comments, the word "dog" is the best predictor. This may be a result when people include "dog" in their comments, they tend to give more examples based on their life stories that makes their comment approachable and acceptable. Other words like "univers", "popul", "scientif" tend to appeal to the authority or peer pressure that to convince people.**
+
+**For posts, the word predictors of persuasion seem better, as their p-value is much smaller. The word "empathi" is the best predictor, as when people use "empathi" words in their posts, they tend to start to think from the other side that are more likely to be convinced. Other words like "deadlin" and "submit" indicate that the people are facing a time limit to be convinced, which may push them to be convinced.**
+
+### 5. Is persuasion more likely to happen for some topics than others?
+
+Are specific topics about which people are more likely to change their mind? Fit a topic model with the text of the original post (`post_text`). Choose a number of topics that seems appropriate. Then, add a new variable to the data frame that refers to the most likely topic for that post. Compute the proportion of threads related to that topic for which a delta was assigned. What do you learn?
+
+```{r}
+library(topicmodels)
+posts_dfm <- dfm_trim(posts_dfm, min_docfreq = 2)
+K <- 20 #I choose K = 20 as I think this K=20 is the most valid after testing other numbers
+lda <- LDA(posts_dfm, k = K, method = "Gibbs", 
+           control = list(verbose=25L, seed = 123, burnin = 100, iter = 500))
+terms <- get_terms(lda, 15)
+topics <- get_topics(lda, 1)
+r$topics <- topics
+
+#Compute the proportion of threads related to that topic for which a delta was assigned:
+table(r$topics[which(r$delta==1)]) / table(r$topics)
+
+# Topic 5: Trump's policy
+paste(terms[,1], collapse=", ")
+sample(r$post_text[topics==1], 1)
+#Topic 3 with highest proportion of delta: study and work
+paste(terms[,3], collapse=", ")
+sample(r$post_text[topics==3], 1)
+#Topic 13 with second lowest proportion of delta: gun control
+paste(terms[,4], collapse=", ")
+sample(r$post_text[topics==4], 1)
+```
+**Yes, persuasion is more likely to happen for some topics than others, as some topics have much higher proportion of delta.**
+
+**For example, in the topic 3 about study and work, persuasion is more likely to happen (72.5% are delta). On the other hand, in the topic 4 about gun control, persuasion is clearly less likely to happen (38.9% are delta).**

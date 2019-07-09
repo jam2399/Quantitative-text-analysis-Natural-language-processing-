@@ -1,0 +1,66 @@
+---
+title: "Assignment 5"
+author: "YOUR NAME HERE"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "##"
+)
+```
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+### Collecting data from social media
+
+What are the characteristics of arguments that are more likely to change people's minds? In this assignment, we will try to answer this question using data collected from social media and all the text analytic methods we have covered throughout this course. This problem set was inspired by the article ["Winning arguments"](https://arxiv.org/pdf/1602.01103.pdf) by Tan et al. (I recommend you take a look at the paper for inspiration and some background information.)
+
+The first step in our analysis will be to collect data from the [*Change My View*](https://www.reddit.com/r/changemyview) subreddit on Reddit. This subreddit is a forum where someone gives an opinion and then in the comments other users try to make arguments to change that person's opinion. Whenever his/her opinion changes, this is noted with a `delta`, which means he/she changed their mind.
+
+We will use the `RedditExtractoR` package to collect the data using the `get_reddit` function. To facilitate the analysis, I already collected the data for you using the code below, which took around 40 minutes to run. However, feel free to modify the code if you want to focus on posts that mention specific keywords by changing the arguments of the `get_reddit` function.
+
+```{r, eval=FALSE}
+library(RedditExtractoR)
+library(quanteda)
+
+# collecting up to 50 pages of posts in r/changemyview
+rd <- get_reddit(subreddit="changemyview", sort="new", page_threshold=50)
+
+# deleting bot messages and removed messages
+rd <- rd[rd$user!="DeltaBot",]
+
+# finding comments that gave deltas
+rd$delta <- grepl("!delta|#8710|\006", rd$comment)
+
+# finding comments that changed people's minds
+deltas <- which(rd$delta) # comments that assign deltas
+changed_views <- rd[deltas-1,] # comments that received deltas
+changed_views$delta <- 1
+
+# taking a random sample of rest of comments as control group
+others <- (1:nrow(rd))[-c(deltas, deltas-1)]
+set.seed(123)
+notcmv <- sample(others, length(deltas))
+did_not_change_views <- rd[notcmv,]
+did_not_change_views$delta <- 0
+
+# putting both sets together
+r <- rbind(changed_views, did_not_change_views)
+
+# deleting removed / deleted comments
+r <- r[-grep("comment has been removed", r$comment),]
+r <- r[r$comment!="[deleted]",]
+
+# keeping comments longer than 10 words
+r <- r[ntoken(r$comment)>10,]
+
+write.csv(r, file="cmv-comments.csv", row.names=FALSE)
+
+```
+
+
+
