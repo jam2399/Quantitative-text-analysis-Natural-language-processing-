@@ -1,0 +1,248 @@
+---
+title: "Assignment 3"
+author: "Liu Hongtao"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "##"
+)
+```
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+### Machine Learning for Text
+
+In this assignment, you will use R to understand and apply document classification and supervised scaling using R and **quanteda**.
+
+1. **(3 points) Classifying movie reviews, Part 1**.  We will start with a classic computer science dataset of movie reviews, [(Pang and Lee 2004)](http://www.cs.cornell.edu/home/llee/papers/cutsent.pdf).
+The movies corpus has an attribute `Sentiment` that labels each text as either `pos` or `neg` according to the original imdb.com archived newspaper review star rating.  We will begin by examining the conditional probabilities at the word level.
+
+a.  Load the movies dataset and examine the attributes:
+
+```{r}
+#devtools::install_github("quanteda/quanteda.corpora")
+require(quanteda, warn.conflicts = FALSE, quietly = TRUE)
+data(data_corpus_movies, package = "quanteda.corpora")
+summary(data_corpus_movies, 10)
+```    
+
+b. What is the overall probability of the class `pos` in the corpus? Are the classes balanced? (Hint: Use `table()` on the docvar of `Sentiment`.) 
+        
+```{r}
+length(which(docvars(data_corpus_movies)$Sentiment == "pos")) / length(docvars(data_corpus_movies)$Sentiment)
+table(docvars(data_corpus_movies)$Sentiment) 
+```
+
+**The overall probability of the class `pos` in the corpus is 0.5, the classes are balanced.**
+
+c. Make a dfm from the corpus, grouping the documents by the `Sentiment` docvar. 
+
+Words with very low overall frequencies in a corpus of this size are unlikely to be good general predictors. Remove words that occur less than twenty times using `dfm_trim`.
+
+```{r}
+dfmd <- dfm(data_corpus_movies, remove_punct=TRUE, remove=c(stopwords("english")), groups ="Sentiment")
+dfmd <- dfm_trim(dfmd, min_termfreq = 20)
+```
+
+d. Calculate the word-level likelihoods for each class, from the reduced dfm.  (This is the probability of a word given the class `pos` and `neg`.)  What are the word likelihoods for `"good"` and "`great`"? What do you learn? Use `kwic()` to find out the context of `"good"`.
+
+Clue: you don't have to compute the probabilities by hand. You should be able to obtain them using `dfm_weight`.
+    
+```{r}
+dfm_weight(dfmd, scheme = "prop")[,c("good", "great")]
+
+head(kwic(data_corpus_movies, pattern = "good", window = 10), 10)
+```
+
+**The word likehood of good is (neg: 0.00429, pos:0.00405), of great is (neg:0.00150, pos:0.00253), suggesting that the word score of good is slightly negative (-1*0.00429 + 1* 0.00405 = -0.00024), word score of great is positive. When I take look of "good" context, I think people tend to use "good" to describe the things they accepted in a movie, and then mainly critisized other things. This may be a reason why "good" is slightly negative in word score.**
+
+
+2.  **(4 points) Classifying movie reviews, Part 2**.  Now we will use `quanteda`’s naive bayes `textmodel_nb()` to run a prediction on the movie reviews.
+
+a. The movie corpus contains 1000 positive examples followed by 1000 negative examples.  When extracting training and testing labels, we want to get a mix of positive and negative in each set, so first we need to shuffle the corpus. You can do this with the `corpus_sample*()` function:
+
+```{r}
+set.seed(1234)  # use this just before the command below
+moviesShuffled <- corpus_sample(data_corpus_movies, size = 2000)
+#summary(moviesShuffled)
+```
+
+Next, make a dfm from the shuffled corpus, and make training labels. In this case, we are using 1500 training labels, and leaving the remaining 500 unlabelled to use as a test set. We will also trim the dataset to remove rare features.
+
+```{r}
+smp <- sample(c("train", "test"), size=2000, 
+               c(1500, 500), replace=TRUE)
+train <- which(smp=="train")
+test <- which(smp=="test")
+
+dfmnb <- dfm(moviesShuffled, remove_punct=TRUE, remove=c(stopwords("english")))
+dfmnb <- dfm_trim(dfmnb, min_termfreq = 20)
+```
+
+b. Now, run the training and testing commands of the Naive Bayes classifier, and compare the predictions for the documents with the actual document labels for the test set using a confusion matrix.
+
+```{r}
+# training Naive Bayes model
+nb <- textmodel_nb(dfmnb[train,], docvars(moviesShuffled, "Sentiment")[train])
+# predicting labels for test set
+preds <- predict(nb, newdata = dfmnb[test,])
+# computing the confusion matrix
+(cm <- table(preds, docvars(moviesShuffled, "Sentiment")[test]))
+
+```
+
+c. Compute the following statistics for the last classification. Use this code for starters:
+
+```{r}
+precrecall <- function(mytable, verbose=TRUE) {
+    truePositives <- mytable[1,1]
+    falsePositives <- sum(mytable[1,]) - truePositives
+    falseNegatives <- sum(mytable[,1]) - truePositives
+    precision <- truePositives / (truePositives + falsePositives)
+    recall <- truePositives / (truePositives + falseNegatives)
+    if (verbose) {
+        print(mytable)
+        cat("\n precision =", round(precision, 2), 
+            "\n    recall =", round(recall, 2), "\n")
+    }
+    invisible(c(precision, recall))
+}
+```
+    
+Hint: Computing precision and recall is not the same if we are considering the "true positive" to be predicting positive for a true positive, versus predicting negative for a true negative.  Since the factors of `Sentiment` are ordered alphabetically, and since the table command puts lower integer codes for factors first, `movtable` by default puts the (1,1) cell as the case of predicting negative reviews as the "true positive", not predicting positive reviews.  To get the positive-postive prediction you will need to reverse index it, e.g. `movTable[2:1, 2:1]`.
+
+1. precision and recall, *for the positive category prediction*;
+        
+```{r}
+precrecall(cm[2:1, 2:1])
+```
+
+2. accuracy.
+        
+```{r}
+sum(diag(cm)) / sum(cm)
+```
+
+d. Extract the posterior class probabilities of the words `good` and `great`. Do the results confirm your previous finding? Clue: look at the documentation for `textmodel_nb()` for how to extract the posterior class probabilities.
+
+```{r}
+nb$PcGw[,c("good", "great")]
+```
+**Yes, the result confirms my previous finding **
+3.  **(3 points) Classifying movie reviews, Part 3**  
+
+a. Run the classification task using a lasso regression through the `cv_glmnet()` function in the `glmnet` package. Then, show the graph with the cross-validated performance of the model based on the number of features included. You should find a curvilinear pattern. Why do you think this pattern emerges?
+
+```{r}
+# install.packages("glmnet")
+library(glmnet)
+
+lasso <- cv.glmnet(x=dfmnb[train,], y=docvars(moviesShuffled, "Sentiment")[train],
+                   alpha=1, nfolds=5, family="binomial")
+plot(lasso)
+```
+
+**I think this pattern emerges because in the beginning the model is overfitted, we need 333 features to predict**
+b. Predict the scores for the remaining 500 reviews in the test set and then compute precision and recall for the positive category, the F1 score, and the accuracy. Do the results improve?
+
+```{r}
+pred <- predict(lasso, dfmnb[test,], type="class")
+(cm <- table(pred, docvars(moviesShuffled, "Sentiment")[test]))
+
+# precision and recall
+precrecall(cm[2:1, 2:1])
+# accuracy
+sum(diag(cm)) / sum(cm)
+
+#the F1 score????
+```
+**Not really improved, the recall goes up a little bit while the precision goes down a lilttle, recall remains almost the same.**
+c. Look at the coefficients with the highest and lowest values in the best cross-validated model. What type of features is the classifier relying on to make predictions? Do you think this is a good model?
+
+```{r}
+# extracting coefficients
+best.lambda <- which(lasso$lambda==lasso$lambda.1se)
+beta <- lasso$glmnet.fit$beta[,best.lambda]
+
+## identifying predictive features
+df <- data.frame(coef = as.numeric(beta),
+                ngram = names(beta), stringsAsFactors=F)
+
+df <- df[order(df$coef),]
+head(df[,c("coef", "ngram")], n=10)
+tail(df[,c("coef", "ngram")], n=10)
+
+```
+**Types of features the classifier highly relying on are listed above, most of very postive wordfs are adjective and similar for the negative words but negative words have some verbs. They are all clearly postive or negative words respectively for the head and tail, so I think it is a good model**
+
+4.  **(3 points) Classifying amicus briefs using Naive Bayes.**  
+
+This exercise uses *amicus curiae* briefs from US Supreme Court cases on affirmative action in college admissions. [(Evans et al 2007)](http://onlinelibrary.wiley.com/doi/10.1111/j.1740-1461.2007.00113.x/full).  [Amicus curiae](http://en.wikipedia.org/wiki/Amicus_curiae) are persons or organizations not party to a legal case who are permitted by the court to offer it advice in the form of an *amicus brief*. The amicus briefs in this corpus are from an affirmative action case in which an applicant to a university who was denied a place petitioned the Supreme Court, claiming that they were unfairly rejected because of affirmative action policies.  *Amicus curiae* could advise the court either in support of the petitioner, therefore opposing affirmative action, or in favour of the respondent — the University— therefore supporting affirmative action.  
+We will use the original briefs from the [Bolinger case](http://en.wikipedia.org/wiki/Grutter_v._Bollinger#Case_.28_Supreme_Court_.29) examined by Evans et al (2007) for the training set, and the amicus briefs as the test set.
+    
+```{r}
+data(data_corpus_amicus, package = "quanteda.corpora")
+summary(data_corpus_amicus, 5)
+```
+
+The first four texts will be our training set - these are already set in the docvars to the `amicusCorpus` object.  
+
+```{r}
+# set training class
+trainclass <- docvars(data_corpus_amicus, "trainclass")
+# set test class
+testclass  <- docvars(data_corpus_amicus, "testclass")
+test <- is.na(testclass)== FALSE
+```
+
+a. Construct a dfm, and then predict the test class values using the Naive Bayes classifer.
+
+```{r}
+dfmam <- dfm(data_corpus_amicus, remove_punct=TRUE, remove=c(stopwords("english")))
+dfmam <- dfm_trim(dfmam, min_termfreq = 20)
+#dfmtest <- dfm(as.character(testclass), remove_punct=TRUE, remove=c(stopwords("english")))
+#dfmtest <- dfm_trim(dfmtest, min_termfreq = 20)
+
+# training Naive Bayes model
+nb <- textmodel_nb(dfmam, trainclass)
+# predicting labels for test set
+preds <- predict(nb, dfmam[test])
+
+(cm <- table(preds, docvars(data_corpus_amicus, "testclass")[test]))
+```
+
+b.  Compute accuracy, precision, and recall for both categories
+    
+```{r}
+# precision and recall for AR
+precrecall(cm[2:1, 2:1])
+# accuracy
+sum(diag(cm)) / sum(cm)
+#precision and recall for AP
+precrecall(cm)
+```
+    
+d. Now rerun steps 2-3 after weighting the dfm using *tf-idf*, and see if this improves prediction. What do you find?
+    
+```{r}
+dfmam <- dfm_tfidf(dfmam)
+
+# training Naive Bayes model
+nb <- textmodel_nb(dfmam, trainclass)
+# predicting labels for test set
+preds <- predict(nb, dfmam[test])
+(cm <- table(preds, docvars(data_corpus_amicus, "testclass")[test]))
+# precision and recall For AR
+precrecall(cm[2:1, 2:1])
+precrecall(cm)
+# accuracy
+sum(diag(cm)) / sum(cm)
+
+```
+
+**The tf-idf weighting does not really improve the prediction, as the accuracy and recall decrease significantly when the precision improves a little bit. Its prediction give clearly more "P" calss than before, so the weighting changes a lot. The result for Ap class also does not improve clearly, as the recall goes up to 0.84, while the precision goes down to 0.52**

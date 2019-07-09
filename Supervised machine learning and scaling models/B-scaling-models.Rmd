@@ -1,0 +1,136 @@
+---
+title: "Assignment 3 Solutions"
+author: "YOUR NAME HERE"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "##"
+)
+```
+
+```{r, echo = FALSE}
+library("quanteda", quietly = TRUE, warn.conflicts = FALSE, verbose = FALSE)
+```
+
+### Supervised scaling methods
+
+
+5.  **(4 points) Wordscores applied to Twitter text**.
+
+In class we saw an example of how to estimate ideology based on the text of legislators' tweets. Now we will extend it to tweets by candidates. 
+
+Let's start by reading the tweets by Members of Congress into memory with the code from the lecture materials.
+
+```{r}
+cong <- read.csv("data/congress-tweets.csv", stringsAsFactors=F)
+#summary(corpus(cong$text))
+```
+
+The file `data/candidate-tweets.csv` contains all the tweets sent by Donald Trump, Ted Cruz, Hillary Clinton, and Bernie Sanders during the 2016 primary election campaign. We'll read it into memory and collapse the tweets for each candidate into a single document so that the documents are in the same format as in the Congress dataset.
+
+```{r}
+cand <- read.csv("data/candidate-tweets.csv", stringsAsFactors=F)
+tweet <- data.frame(1:4)
+tweet[,1] <- unique(cand$screen_name)
+colnames(tweet) <- "screen_name"
+for (i in unique(cand$screen_name)){
+  tweet[which(tweet$screen_name == i), "text"] <- paste(as.character(cand[which(cand$screen_name == i), "text"]), collapse="")
+}
+tweet$idealPoint <- rep(NA, 4)
+```
+
+a. Create a single corpus object for all the 105 documents. Make sure you add informative document names. Then, create a vector with the scores for the reference texts (from the 100 legislators) and the virgin texts (for the 4 candidates).
+
+```{r}
+#Add together the two data set
+tweet2 <- as.data.frame(cong[,c("screen_name", "text", "idealPoint")])
+tweet <- rbind(tweet2,tweet)
+
+#substituting handles with @. to provent overfitting.
+tweet$text <- gsub('@[0-9_A-Za-z]+', '@', tweet$text)
+
+#make corpus
+tweetc <- corpus(tweet$text)
+docnames(tweetc) <- tweet$screen_name
+```
+
+With this new corpus, create a document-feature matrix and trim it to a reasonable size to remove uninformative words.
+
+```{r}
+dfmt <- dfm(tweetc,  remove=stopwords("english"), remove_url=TRUE, 
+             ngrams=1:2, verbose=TRUE)
+dfmt <- dfm_trim(dfmt, min_termfreq = 2, verbose = TRUE)
+```
+
+b. Run wordscores to predict the ideology of the 4 candidates. Use an adequate rescaling method. What do you find? Are the results what you would expect and if not, why do you think that's the case?
+
+```{r}
+# fitting wordscores
+ws <- textmodel_wordscores(dfmt[1:100], tweet2$idealPoint, smooth = 0.5)
+
+sw <- sort(coef(ws))
+#head(sw, n=20)
+#tail(sw, n=20)
+
+# Now trying to predict the scores for all the candidates
+(pred <- predict(ws, newdata = dfmt[101:104, ], rescaling = "lbg"))
+```
+
+**Not Exactly, since I expect Sanders as a "socialist" should be more "left" than Hillary and also I expect Ted Cruz should be more "right" than Trump as he is the right wing in the Republican party which was in tea party movement. I think the wordsocres work in differentiate left and right, but may not be accurate enough in scaling. The reasons may be that  1. reference scores are not appropraite enough; 2. reference texts of congressmen's tweets may be not discriminating enough, as Trump has no experience in congress, and Hillary hasn't been in congress for a long time; 3. Trump and Hillary tend to perform extremer on twitter for election purpose by frequently using more highest/lowest socred words in their tweets.**
+
+
+6. **(3 points) Scaling movie reviews, Part 4**.  Here we will return to the movie reviews one last time.
+
+a. Load the movies dataset from quanteda.corpora. Then, shuffle the dataset, and take a random sample of 500 of the movie reviews as your "reference" texts. As reference scores, set the ones that are positive to a reference value of +1, and the negative reviews to a value of -1 
+    
+```{r}
+data(data_corpus_movies, package = "quanteda.corpora")
+#summary(data_corpus_movies)
+
+#set numeric values
+docvars(data_corpus_movies)$Sentiment <- gsub('pos', 1, docvars(data_corpus_movies)$Sentiment)
+docvars(data_corpus_movies)$Sentiment <- gsub('neg', -1, docvars(data_corpus_movies)$Sentiment)
+
+#take a random sample of 500 of the movie reviews as reference texts
+set.seed(123)
+train <- sample(1:ndoc(data_corpus_movies), floor(500))
+trainreference <- data_corpus_movies[train,]
+```
+        
+b. Score the remaining movie reviews, and predict their "positive-negative" rating using Wordscores. Remember to first create a document-feature matrix. You may want to stem the features here.
+    
+```{r}
+#create dfm for training data
+dfmm <- dfm(trainreference,  remove=stopwords("english"), remove_url=TRUE, 
+            verbose=TRUE, stem = TRUE)
+dfmm <- dfm_trim(dfmm, min_termfreq = 2, verbose = TRUE)
+#create dfm for test data
+dfm_test <- dfm(data_corpus_movies[-train,],  remove=stopwords("english"), remove_url=TRUE, 
+            verbose=TRUE, stem = TRUE)
+dfm_test <- dfm_trim(dfm_test, min_termfreq = 2, verbose = TRUE)
+
+#wordesocres and predict
+ws <- textmodel_wordscores(dfmm, as.numeric(docvars(data_corpus_movies, "Sentiment")[train]), smooth = 0.5)
+(pred <- predict(ws, newdata = dfm_test, rescaling = "lbg"))
+```
+
+c. From the results of b, compare the values using `boxplot()` for the categories of their rater assigned positivity or negativity.  Describe the resulting pattern. Look for examples of positive reviews that are predicted to be negative and vice versa. Why do you think the model failed in those cases?
+
+```{r, fig.width = 3, fig.height = 5}
+boxplot(pred ~ as.numeric(docvars(data_corpus_movies, "Sentiment")[-train]),
+     xlab="Assigned sentiment", 
+     ylab="Wordscores estimates")
+
+#negative reviews that are predicted to be positive:
+data_corpus_movies[order(pred, decreasing = TRUE)[1:2]]
+#positive reviews that are predicted to be negative:
+data_corpus_movies[intersect(x = which(pred < -2 ), y = which(docvars(data_corpus_movies, "Sentiment")[-train] == "1"))]
+```
+
+**The pattern shows that the two boxes distinguish each other at 0, indicating that 75% of the predicted results are on the correct sides. The median of predicted results is about -0.5 and 0.5 for the neg and pos categories, while the outliers of predicted values with extrem values are many, interestingly, two outlies of negative sentiment group have the 2 highest predicted values of near 6 and near 5(suggesting very strong postive).**
+
+**For the resons of the model failed in those cases. First, for the positive reviews that are predicted to be negative, the reason may be that they are kinds of crime films with many reviews talking about its story that used many negative words. And I noticed some dirty words are transcoded a lot in these cases (e.g. fu*king). And this is similar for the negative reviews that are predicted to be positive, many of criticism talked a lot about its story which used some postive words, then mainly critisized the film. Some of them used some postive words to talk about the things they feel okay, but mainly critisize the film. Secondly, the reference score is not a continuous scaling, it only has value of -1 and 1 which is bionomial, however, the result is a continuous rating that has a bigger range, which may reduce accuracy.**
+
